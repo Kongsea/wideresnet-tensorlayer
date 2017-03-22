@@ -5,8 +5,8 @@ from keras.objectives import categorical_crossentropy
 from keras.metrics import categorical_accuracy as accuracy
 from keras.datasets import cifar10
 from keras.utils import np_utils
-from keras.layers import Dense, Activation, Flatten, Lambda, BatchNormalization, Dropout, Reshape
-from keras.layers import Convolution3D, MaxPooling3D
+from keras.layers import Dense, Activation, Flatten, Lambda, BatchNormalization
+from keras.layers import Convolution3D, MaxPooling3D, Dropout, Reshape
 from keras.engine import merge, Input, Model
 from keras.engine.training import collect_trainable_weights
 import numpy as np
@@ -21,24 +21,9 @@ class CNNEnv:
     # The data, shuffled and split between train and test sets
     (self.x_train, self.y_train), (self.x_test, self.y_test) = cifar10.load_data()
 
-    # Reorder dimensions for tensorflow
-    self.x_train = np.transpose(self.x_train.astype('float32'), (0, 1, 2, 3))
-    self.mean = np.mean(self.x_train, axis=0, keepdims=True)
-    self.std = np.std(self.x_train)
-    self.x_train = (self.x_train - self.mean) / self.std
-    self.x_test = np.transpose(self.x_test.astype('float32'), (0, 1, 2, 3))
-    self.x_test = (self.x_test - self.mean) / self.std
-
-    # self.x_train = self.x_train.reshape(self.x_train.shape[0], self.x_train.shape[1]*self.x_train.shape[2]*self.x_train.shape[3])
-    # self.x_test = self.x_test.reshape(self.x_test.shape[0], self.x_test.shape[1]*self.x_test.shape[2]*self.x_test.shape[3])
-    print('x_train shape:', self.x_train.shape)
-    print('x_test shape:', self.x_test.shape)
-
     # Convert class vectors to binary class matrices
-    self.y_train = np_utils.to_categorical(self.y_train)
-    self.y_test = np_utils.to_categorical(self.y_test)
-    print('y_train shape:', self.y_train.shape)
-    print('y_test shape:', self.y_test.shape)
+    # self.y_train = np_utils.to_categorical(self.y_train)
+    # self.y_test = np_utils.to_categorical(self.y_test)
 
     # For generator
     self.num_examples = self.x_train.shape[0]
@@ -56,29 +41,6 @@ class CNNEnv:
     self.img_col = 40
     self.img_channels = 1
     self.nb_classes = 2
-
-  def next_batch(self, batch_size):
-    """Return the next `batch_size` examples from this data set."""
-    self.batch_size = batch_size
-
-    start = self.index_in_epoch
-    self.index_in_epoch += self.batch_size
-
-    if self.index_in_epoch > self.num_examples:
-      # Finished epoch
-      self.epochs_completed += 1
-      # Shuffle the data
-      perm = np.arange(self.num_examples)
-      np.random.shuffle(perm)
-      self.x_train = self.x_train[perm]
-      self.y_train = self.y_train[perm]
-
-      # Start next epoch
-      start = 0
-      self.index_in_epoch = self.batch_size
-      assert self.batch_size <= self.num_examples
-    end = self.index_in_epoch
-    return self.x_train[start:end], self.y_train[start:end]
 
   def step(self):
 
@@ -134,11 +96,11 @@ class CNNEnv:
     # Keras layers can be called on TensorFlow tensors:
     x = Convolution3D(16, 3, 3, 3, init='he_normal', border_mode='same')(img)
 
-    for i in range(0, self.blocks_per_group):
+    for i in range(self.blocks_per_group):
       nb_filters = 16 * self.widening_factor
       x = residual_block(x, nb_filters=nb_filters, subsample_factor=1)
 
-    for i in range(0, self.blocks_per_group):
+    for i in range(self.blocks_per_group):
       nb_filters = 32 * self.widening_factor
       if i == 0:
         subsample_factor = 2
@@ -146,7 +108,7 @@ class CNNEnv:
         subsample_factor = 1
       x = residual_block(x, nb_filters=nb_filters, subsample_factor=subsample_factor)
 
-    for i in range(0, self.blocks_per_group):
+    for i in range(self.blocks_per_group):
       nb_filters = 64 * self.widening_factor
       if i == 0:
         subsample_factor = 2
@@ -166,17 +128,6 @@ class CNNEnv:
 
     optimizer = tf.train.MomentumOptimizer(0.01, 0.9).minimize(loss)
 
-    '''
-        with sess.as_default():
-
-            for i in range(10):
-
-                batch = self.next_batch(self.batch_num)
-                _, l = sess.run([optimizer, loss],
-                                feed_dict={img: batch[0], labels: batch[1]})
-                print(l)
-        '''
-
     with sess.as_default():
       batch = self.next_batch(self.batch_num)
       _, l = sess.run([optimizer, loss],
@@ -186,9 +137,9 @@ class CNNEnv:
     acc_value = accuracy(labels, preds)
 
     '''
-        with sess.as_default():
-            acc = acc_value.eval(feed_dict={img: self.x_test, labels: self.y_test})
-            print(acc)
+    with sess.as_default():
+        acc = acc_value.eval(feed_dict={img: self.x_test, labels: self.y_test})
+        print(acc)
         '''
 
 
