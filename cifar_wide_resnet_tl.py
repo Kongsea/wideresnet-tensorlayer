@@ -3,6 +3,7 @@ import tensorlayer as tl
 from tensorlayer.layers import set_keep
 import numpy as np
 import os
+import time
 
 
 class CNNEnv:
@@ -23,7 +24,7 @@ class CNNEnv:
     self.widening_factor = 4
 
     # Basic info
-    self.batch_num = 64
+    self.batch_num = 8
     self.img_depth = 40
     self.img_row = 40
     self.img_col = 40
@@ -90,7 +91,8 @@ class CNNEnv:
         batch_size=self.batch_num,
         num_threads=self.NUM_PREPROCESS_THREADS,
         capacity=min_queue_examples + 3 * self.batch_num)
-    self.labels = tf.one_hot(tf.reshape(self.labels, [-1]), 2)
+    # self.labels = tf.one_hot(tf.reshape(self.labels, [-1]), 2)
+    self.labels = tf.reshape(self.labels, [-1])
 
   def step(self):
 
@@ -98,7 +100,7 @@ class CNNEnv:
       """
       Function for Lambda layer
       """
-      pattern = [[0, 0], [0, 0], [0, 0], [pad - pad // 2, pad // 2]]
+      pattern = [[0, 0], [0, 0], [0, 0], [0, 0], [pad - pad // 2, pad // 2]]
       return tf.pad(x, pattern)
 
     def residual_block(x, count, nb_filters=16, subsample_factor=1):
@@ -112,7 +114,7 @@ class CNNEnv:
                                        ksize=subsample,
                                        strides=subsample,
                                        padding='VALID',
-                                       pool=tf.nn.max_pool3d(),
+                                       pool=tf.nn.max_pool3d,
                                        name=name_pool)
 
       else:
@@ -167,12 +169,11 @@ class CNNEnv:
       return out
 
     # Placeholders
-    learning_rate = tf.placeholder(tf.float32)
-    img = tf.placeholder(tf.float32, shape=[
-                         self.batch_num, self.img_depth, self.img_row, self.img_col, self.img_channels])
-    labels = tf.placeholder(tf.int32, shape=[self.batch_num, ])
+    data_node = tf.placeholder(tf.float32, shape=[
+        self.batch_num, self.img_depth, self.img_row, self.img_col, self.img_channels])
+    labels_node = tf.placeholder(tf.int64, shape=[self.batch_num, ])
 
-    x = tl.layers.InputLayer(img, name='input_layer')
+    x = tl.layers.InputLayer(data_node, name='input_layer')
     x = tl.layers.Conv3dLayer(x,
                               act=tf.nn.relu,
                               shape=[3, 3, 3, 1, 16],
@@ -215,7 +216,7 @@ class CNNEnv:
                             ksize=[1, 2, 2, 2, 1],
                             strides=[1, 2, 2, 2, 1],
                             padding='VALID',
-                            pool=tf.nn.max_pool3d(),
+                            pool=tf.nn.max_pool3d,
                             name='pool_last')
 
     x = tl.layers.FlattenLayer(x, name='flatten')
@@ -227,92 +228,82 @@ class CNNEnv:
 
     output = x.outputs
 
-    cost = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(output, labels))
+    cost = tf.reduce_mean(
+        tf.nn.sparse_softmax_cross_entropy_with_logits(output, labels_node))
 
-    correct_prediction = tf.equal(tf.cast(tf.argmax(output, 1), tf.int32), labels)
+    correct_prediction = tf.equal(tf.cast(tf.argmax(output, 1), tf.int64), labels_node)
     acc = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
     train_params = x.all_params
     train_op = tf.train.MomentumOptimizer(
-        learning_rate, 0.9, use_locking=False).minimize(cost, var_list=train_params)
-
-    self.sess.run(tf.global_variables_initializer())
-
-    self.init_bin_file()
-    self.get_train_data()
-
-    # for i in range(10):
-    #   train_data, train_label = sess.run([self.images, self.labels])
-    #   feed_dict = {img: train_data, labels: train_label, learning_rate: 0.01}
-    #   feed_dict.update(x.all_drop)
-    #   _, l, ac = self.sess.run([train_op, cost, acc], feed_dict=feed_dict)
-    #   print('loss', l)
-    #   print('acc', ac)
+        0.01, 0.9, use_locking=False).minimize(cost, var_list=train_params)
 
     sstt = time.time()
     saver = tf.train.Saver(tf.global_variables())
 
-    TRAIN_FREQUENCY = self.train_size // self.batch_num // 2
-    TEST_FREQUENCY = self.train_size // self.batch_num // 2
+    TRAIN_FREQUENCY = self.train_size // self.batch_num // 200
+    TEST_FREQUENCY = self.train_size // self.batch_num // 200
     SAVE_FREQUENCY = 10 * self.train_size // self.batch_num
 
-    with tf.Session() as sess:
-      sess.run(tf.local_variables_initializer())
-      sess.run(tf.global_variables_initializer())
-      summary_writer = tf.summary.FileWriter(self.WORK_DIRECTORY, sess.graph)
-      coord = tf.train.Coordinator()
-      threads = tf.train.start_queue_runners(sess=sess, coord=coord)
-      try:
-        while not coord.should_stop():
-          start_time = time.time()
-          for step in xrange(int(self.NUM_EPOCHS * self.train_size) // self.batch_num):
-            train_data, train_label = sess.run([train_data_node, train_label_node])
-            feed_dict = {data_node: train_data,
-                         labels_node: train_label, keep_hidden: 0.5}
-            _, l, lr = sess.run(
-                [optimizer, loss, learning_rate], feed_dict=feed_dict)
-            if step != 0 and step % TRAIN_FREQUENCY == 0:
-              et = time.time() - start_time
-              print('Step %d (epoch %.2f), %.1f ms' %
-                    (step, float(step) * self.batch_num / self.train_size, 1000 * et / TRAIN_FREQUENCY))
-              print('Minibatch loss: %.3f, learning rate: %.6f' % (l, lr))
-              start_time = time.time()
-            # if step != 0 and step % TEST_FREQUENCY == 0:
-            #   st = time.time()
-            #   test_label_total = np.zeros(
-            #       (test_size // self.batch_num * self.batch_num))
-            #   prediction_total = np.zeros(
-            #       (test_size // self.batch_num * self.batch_num, 2))
-            #   for ti in xrange(test_size // self.batch_num):
-            #     offset = ti * self.batch_num
-            #     batch_data = test_data[offset:(offset + self.batch_num), ...]
-            #     batch_labels = test_label[offset:(offset + self.batch_num)]
-            #     predictions = eval_in_batches(
-            #         batch_data, sess, eval_predictions, data_node, keep_hidden)
-            #     prediction_total[offset:offset + self.batch_num, :] = predictions
-            #     test_label_total[offset:offset + self.batch_num] = batch_labels
-            #   test_error = error_rate(prediction_total, test_label_total)
-            #   stt = np.random.randint(0, test_size - 11, 1)[0]
-            #   print(prediction_total[stt:stt + 10])
-            #   print(test_label_total[stt:stt + 10])
-            #   print('Test error: %.3f%%' % test_error)
-            #   print('Test costs {:.2f} seconds.'.format(time.time() - st))
-            #   start_time = time.time()
-            if step % SAVE_FREQUENCY == 0 and step != 0:
-              if self.SAVE_MODEL:
-                checkpoint_path = os.path.join(self.WORK_DIRECTORY, 'model.ckpt')
-                saver.save(sess, checkpoint_path, global_step=step)
-              start_time = time.time()
-          else:
+    sess.run(tf.local_variables_initializer())
+    sess.run(tf.global_variables_initializer())
+
+    self.init_bin_file()
+    self.get_train_data()
+
+    summary_writer = tf.summary.FileWriter(self.WORK_DIRECTORY, sess.graph)
+    coord = tf.train.Coordinator()
+    threads = tf.train.start_queue_runners(sess=sess, coord=coord)
+    try:
+      while not coord.should_stop():
+        start_time = time.time()
+        for step in xrange(int(self.NUM_EPOCHS * self.train_size) // self.batch_num):
+          train_data, train_label = sess.run([self.images, self.labels])
+          feed_dict = {data_node: train_data, labels_node: train_label}
+          feed_dict.update(x.all_drop)
+          _, l, ac = self.sess.run([train_op, cost, acc], feed_dict=feed_dict)
+          if step != 0 and step % TRAIN_FREQUENCY == 0:
+            et = time.time() - start_time
+            print('Step %d (epoch %.2f), %.1f ms' %
+                  (step, float(step) * self.batch_num / self.train_size, 1000 * et / TRAIN_FREQUENCY))
+            print('Minibatch loss: %.3f' % (l))
+            start_time = time.time()
+          # if step != 0 and step % TEST_FREQUENCY == 0:
+          #   st = time.time()
+          #   test_label_total = np.zeros(
+          #       (test_size // self.batch_num * self.batch_num))
+          #   prediction_total = np.zeros(
+          #       (test_size // self.batch_num * self.batch_num, 2))
+          #   for ti in xrange(test_size // self.batch_num):
+          #     offset = ti * self.batch_num
+          #     batch_data = test_data[offset:(offset + self.batch_num), ...]
+          #     batch_labels = test_label[offset:(offset + self.batch_num)]
+          #     predictions = eval_in_batches(
+          #         batch_data, sess, eval_predictions, data_node, keep_hidden)
+          #     prediction_total[offset:offset + self.batch_num, :] = predictions
+          #     test_label_total[offset:offset + self.batch_num] = batch_labels
+          #   test_error = error_rate(prediction_total, test_label_total)
+          #   stt = np.random.randint(0, test_size - 11, 1)[0]
+          #   print(prediction_total[stt:stt + 10])
+          #   print(test_label_total[stt:stt + 10])
+          #   print('Test error: %.3f%%' % test_error)
+          #   print('Test costs {:.2f} seconds.'.format(time.time() - st))
+          #   start_time = time.time()
+          if step % SAVE_FREQUENCY == 0 and step != 0:
             if self.SAVE_MODEL:
               checkpoint_path = os.path.join(self.WORK_DIRECTORY, 'model.ckpt')
               saver.save(sess, checkpoint_path, global_step=step)
-            coord.request_stop()
-      except tf.errors.OutOfRangeError:
-        print('Done training -- epoch limit reached')
-      finally:
-        pass
-      coord.join(threads)
+            start_time = time.time()
+        else:
+          if self.SAVE_MODEL:
+            checkpoint_path = os.path.join(self.WORK_DIRECTORY, 'model.ckpt')
+            saver.save(sess, checkpoint_path, global_step=step)
+          coord.request_stop()
+    except tf.errors.OutOfRangeError:
+      print('Done training -- epoch limit reached')
+    finally:
+      pass
+    coord.join(threads)
     print('All costs {:.2f} seconds...'.format(time.time() - sstt))
 
 
