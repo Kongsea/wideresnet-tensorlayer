@@ -1,3 +1,7 @@
+'''3D wide residual networks to classify malignacy of nodules using TensorLayer.
+
+   Clone from Github and modified by Kong Haiyang
+'''
 import tensorflow as tf
 import tensorlayer as tl
 from tensorlayer.layers import set_keep
@@ -9,16 +13,6 @@ import time
 class CNNEnv:
 
   def __init__(self, bin_file, test_file):
-
-    # The data, shuffled and split between train and test sets
-    # self.x_train, self.y_train, self.x_test, self.y_test = tl.files.load_cifar10_dataset(
-    #     shape=(-1, 32, 32, 3), plotable=False)
-
-    # For generator
-    # self.num_examples = self.x_train.shape[0]
-    self.index_in_epoch = 0
-    self.epochs_completed = 0
-
     # For wide resnets
     self.blocks_per_group = 4
     self.widening_factor = 4
